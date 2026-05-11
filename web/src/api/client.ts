@@ -1,4 +1,4 @@
-// Thin fetch wrapper. Same-origin so Authelia's session cookie rides along.
+// Thin fetch wrapper. Same-origin so the session cookie rides along.
 // Throws ApiError on non-2xx with the server's "detail" message when present.
 
 import type { Job } from './types';
@@ -29,6 +29,26 @@ async function handle<T>(res: Response): Promise<T> {
   return (await res.json()) as T;
 }
 
+/** Read the mcpanel_csrf cookie value (set by the backend's CSRF
+ * middleware). Returns null when the cookie isn't present yet — the SPA's
+ * first request is a GET, which both seeds the cookie and exempts itself
+ * from the CSRF check, so by the time we mutate we always have one. */
+function csrfToken(): string | null {
+  if (typeof document === 'undefined') return null;
+  for (const part of document.cookie.split(';')) {
+    const [k, ...rest] = part.trim().split('=');
+    if (k === 'mcpanel_csrf') return decodeURIComponent(rest.join('='));
+  }
+  return null;
+}
+
+function withCsrf(extra?: HeadersInit): HeadersInit {
+  const token = csrfToken();
+  const base = new Headers(extra);
+  if (token) base.set('X-CSRF-Token', token);
+  return base;
+}
+
 export const api = {
   get: <T>(path: string) =>
     fetch(path, { credentials: 'include' }).then(handle<T>),
@@ -37,7 +57,7 @@ export const api = {
     fetch(path, {
       method: 'POST',
       credentials: 'include',
-      headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+      headers: withCsrf(body !== undefined ? { 'Content-Type': 'application/json' } : undefined),
       body: body !== undefined ? JSON.stringify(body) : undefined,
     }).then(handle<T>),
 
@@ -45,7 +65,7 @@ export const api = {
     fetch(path, {
       method: 'PATCH',
       credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
+      headers: withCsrf({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(body),
     }).then(handle<T>),
 
@@ -53,7 +73,7 @@ export const api = {
     fetch(path, {
       method: 'DELETE',
       credentials: 'include',
-      headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+      headers: withCsrf(body !== undefined ? { 'Content-Type': 'application/json' } : undefined),
       body: body !== undefined ? JSON.stringify(body) : undefined,
     }).then(handle<T>),
 
@@ -63,6 +83,7 @@ export const api = {
     return fetch(path, {
       method: 'POST',
       credentials: 'include',
+      headers: withCsrf(),
       body: fd,
     }).then(handle<T>);
   },
@@ -96,6 +117,8 @@ export function uploadWithProgress<T>(
     xhr.open('POST', path);
     xhr.responseType = 'json';
     xhr.withCredentials = true;
+    const token = csrfToken();
+    if (token) xhr.setRequestHeader('X-CSRF-Token', token);
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable && opts.onProgress) opts.onProgress(e.loaded, e.total);
     };
@@ -135,7 +158,7 @@ export async function runJob<T = unknown>(
   const start = await fetch(path, {
     method: 'POST',
     credentials: 'include',
-    headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+    headers: withCsrf(body !== undefined ? { 'Content-Type': 'application/json' } : undefined),
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   if (!start.ok) throw new ApiError(start.status, await parseError(start));

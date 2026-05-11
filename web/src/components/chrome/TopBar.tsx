@@ -1,6 +1,6 @@
-import { NavLink, useMatch } from 'react-router-dom';
+import { NavLink, useMatch, useNavigate } from 'react-router-dom';
 import type { HostInfo, Role } from '../../api/types';
-import { useMe } from '../../api/queries';
+import { useAuthStatus, useLogout, useMe } from '../../api/queries';
 
 interface Tab {
   to: string;
@@ -74,8 +74,33 @@ export function TopBar({
             <div className="h-1.5 w-1.5 rounded-full bg-good" />
           </div>
         )}
+        <LogoutButton />
       </div>
     </header>
+  );
+}
+
+function LogoutButton() {
+  const status = useAuthStatus();
+  const logout = useLogout();
+  const navigate = useNavigate();
+  // In forward-headers mode the upstream proxy owns the session; logging
+  // out from here wouldn't actually sign the user out anywhere, so we
+  // hide the button.
+  if (status.data?.mode !== 'builtin') return null;
+  return (
+    <button
+      type="button"
+      onClick={() =>
+        logout.mutate(undefined, {
+          onSuccess: () => navigate('/login', { replace: true }),
+        })
+      }
+      title="Sign out"
+      className="flex-none rounded-md px-2 py-1.5 text-[12px] font-medium text-dim hover:bg-panel-2 hover:text-text"
+    >
+      {logout.isPending ? '…' : 'SIGN OUT'}
+    </button>
   );
 }
 

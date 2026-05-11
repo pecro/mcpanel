@@ -35,6 +35,18 @@ services:
       PGID: ${PGID:-1000}
       DOCKER_HOST: tcp://mcpanel-socket-proxy:2375
       DOCKER_NETWORK: ${DOCKER_NETWORK:-mcpanel_default}
+      # Auth mode is required. "builtin" for single-admin password auth;
+      # "forward-headers" if you have an upstream proxy (Authelia,
+      # Authentik, Pocket-ID, ...) setting Remote-User / Remote-Groups.
+      AUTH_MODE: ${AUTH_MODE:?set AUTH_MODE=builtin or AUTH_MODE=forward-headers}
+      # Required when AUTH_MODE=builtin, on first boot only. Once you've
+      # logged in, the hash is persisted to auth-state.json and the env
+      # can be removed. _FILE variant takes a path (Docker secrets).
+      MC_ADMIN_PASSWORD: ${MC_ADMIN_PASSWORD:-}
+      MC_ADMIN_PASSWORD_FILE: ${MC_ADMIN_PASSWORD_FILE:-}
+      # Set to "false" only when running on plain HTTP for local dev.
+      MC_COOKIE_SECURE: ${MC_COOKIE_SECURE:-true}
+      MC_SESSION_TTL_DAYS: ${MC_SESSION_TTL_DAYS:-7}
       # Single-value MC_DATA_ROOT works when the host path equals the
       # in-container path (the simple Linux Docker case). For Docker
       # Desktop / Podman / rootless setups where the two differ, set

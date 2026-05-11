@@ -1,5 +1,12 @@
 // JSON shapes returned by /api/v1/*. Mirrors the serialization helpers
-// in apps/mc-panel-v2/app/api.py.
+// in app/api.py.
+
+export type AuthMode = 'builtin' | 'forward-headers';
+
+export interface AuthStatus {
+  mode: AuthMode;
+  authenticated: boolean;
+}
 
 export type WorldStatus = 'running' | 'exited' | 'created' | 'none';
 

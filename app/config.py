@@ -75,6 +75,76 @@ PORT_LABEL = "mc-panel.port"
 # background loops while still serving the UI / API.
 DISABLE_BACKGROUND_LOOPS = os.environ.get("MC_DISABLE_BACKGROUND_LOOPS", "").lower() in ("1", "true", "yes")
 
+# --- Auth -------------------------------------------------------------------
+# AUTH_MODE = "builtin"           — single-admin password, signed cookie sessions
+# AUTH_MODE = "forward-headers"   — Remote-User / Remote-Groups from an upstream
+#                                   proxy (Authelia, Authentik, Pocket-ID, ...)
+# unset                           — refuse to start (must be explicit)
+AUTH_MODE = os.environ.get("AUTH_MODE", "").strip().lower()
+
+# Dev escape hatch — every request becomes admin@anonymous. Never expose to a
+# real network.
+_ALLOW_UNAUTHENTICATED = (
+    os.environ.get("MC_PANEL_I_KNOW_THIS_IS_UNAUTHENTICATED", "").strip().lower()
+    in ("1", "true", "yes")
+)
+
+# Bootstrap admin password — used only on first boot in built-in mode. Once
+# hashed and persisted to auth-state.json, the env can be removed.
+_ADMIN_PASSWORD = os.environ.get("MC_ADMIN_PASSWORD", "").strip()
+_ADMIN_PASSWORD_FILE = os.environ.get("MC_ADMIN_PASSWORD_FILE", "").strip()
+
+
+def admin_password_bootstrap() -> str:
+    """Read the bootstrap password from env or file. _FILE wins if both set
+    (the Docker-secrets pattern). Empty string if neither is configured."""
+    if _ADMIN_PASSWORD_FILE:
+        try:
+            return Path(_ADMIN_PASSWORD_FILE).read_text().strip()
+        except OSError:
+            return ""
+    return _ADMIN_PASSWORD
+
+
+SESSION_TTL_DAYS = int(os.environ.get("MC_SESSION_TTL_DAYS", "7"))
+COOKIE_SECURE = (
+    os.environ.get("MC_COOKIE_SECURE", "true").strip().lower()
+    not in ("0", "false", "no")
+)
+
+
+def allow_unauthenticated() -> bool:
+    return _ALLOW_UNAUTHENTICATED
+
+
+class ConfigError(RuntimeError):
+    pass
+
+
+def validate_auth() -> None:
+    """Called once at startup. Refuse to boot on incoherent auth config so
+    misconfigured deployments fail loudly instead of silently exposing
+    admin endpoints."""
+    if _ALLOW_UNAUTHENTICATED:
+        return
+    if AUTH_MODE not in ("builtin", "forward-headers"):
+        raise ConfigError(
+            "AUTH_MODE must be 'builtin' or 'forward-headers'. For local "
+            "dev only, set MC_PANEL_I_KNOW_THIS_IS_UNAUTHENTICATED=true to "
+            "skip auth entirely."
+        )
+    if AUTH_MODE == "builtin":
+        # Lazy import — auth_state imports this module.
+        from . import auth_state
+        if not admin_password_bootstrap() and not auth_state.load().admin_password_hash:
+            raise ConfigError(
+                "AUTH_MODE=builtin requires MC_ADMIN_PASSWORD (or "
+                "MC_ADMIN_PASSWORD_FILE) on first boot. Once you've "
+                "logged in or used the change-password endpoint, the "
+                "hash is persisted to auth-state.json and the env can "
+                "be removed."
+            )
+
 # Single source of truth for which server.properties keys are exposed in the
 # UI (both create form and edit form), and how to render them. The order of
 # this dict is the order fields appear in both forms.

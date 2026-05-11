@@ -5,10 +5,11 @@ host. Designed to give a non-technical user full ownership of "their" server
 while keeping the host operator out of the loop for day-to-day ops, with
 admin-only knobs reserved for the operator of the host.
 
-> **Status:** early extraction from a private monorepo. The current release
-> still assumes a forward-auth proxy (Authelia / Authentik / etc.) is in
-> front, setting `Remote-User` / `Remote-Groups` headers. A built-in
-> single-admin auth mode is planned. See the [roadmap](#roadmap).
+> **Status:** early extraction from a private monorepo. The auth model is
+> selectable: a built-in single-admin password backend (default for fresh
+> deployments) or a forward-auth mode that consumes `Remote-User` /
+> `Remote-Groups` headers from an upstream proxy (Authelia, Authentik,
+> Pocket-ID, ...). See [Auth](#auth-model) and the [roadmap](#roadmap).
 
 ## What it does
 
@@ -153,23 +154,54 @@ apps/mc-panel/                  ← top of the new repo when extracted
 
 ## Auth model
 
-Identity comes from Authelia via the `Remote-User` header. Roles come from
-**lldap groups** Authelia forwards in `Remote-Groups`:
+`AUTH_MODE` picks the backend (required env, no default):
 
-| lldap group | Role | Can |
-|---|---|---|
-| `mc-admin` | admin | everything (incl. delete world / delete backup / change panel knobs) |
-| `mc-operator` | operator | everything operational: start/stop, create world, edit properties, manage whitelist+ops, banner, run+pin+edit+restore backups, console |
-| `mc-user` | user | read-only: view worlds + stats, download backups, no mutations |
-| (none) | — | 403 with a "request access" wall |
+### `AUTH_MODE=builtin` — single-admin password
 
-Hierarchy is enforced server-side by `app/permissions.py:require_role`.
-Most-permissive group wins for users in multiple. There is **no in-app role
-authoring** by design — adding a fourth tier means adding the lldap group and
-extending the `_GROUP_TO_ROLE` map.
+A bcrypt-hashed password gates access; sessions are signed cookies. The
+admin role is implicit — everyone who signs in is admin. Bootstrap on
+first run with `MC_ADMIN_PASSWORD` (or `MC_ADMIN_PASSWORD_FILE` for
+Docker secrets). The hash and the cookie-signing secret are persisted to
+`auth-state.json` inside the data dir; the env var can be removed after
+first sign-in. Rotate via the **Admin → Admin password** form, which
+overwrites the persisted hash with no restart needed.
 
-The frontend reads `/api/v1/me` (`useMe()`) for `{user, role, can}` and hides
-controls users can't use; the backend decorator is the source of truth.
+### `AUTH_MODE=forward-headers` — proxy-fronted, role-mapped
+
+Identity comes from `Remote-User`; roles come from `Remote-Groups`,
+mapped onto the three panel tiers via `MC_ADMIN_GROUP` /
+`MC_OPERATOR_GROUP` / `MC_USER_GROUP` (defaults `mc-admin` /
+`mc-operator` / `mc-user`).
+
+| Role | Can |
+|---|---|
+| admin | everything (incl. delete world / delete backup / change panel knobs) |
+| operator | everything operational: start/stop, create world, edit properties, manage whitelist+ops, banner, run+pin+edit+restore backups, console |
+| user | read-only: view worlds + stats, download backups, no mutations |
+| (none) | 403 with a "request access" wall |
+
+Hierarchy is enforced server-side by `app/auth.py:require_role`.
+Most-permissive group wins for users in multiple. There is **no in-app
+role authoring** by design — adding a fourth tier means adding the
+identity-provider group and extending the `_GROUP_TO_ROLE` map in
+`permissions.py`.
+
+### CSRF
+
+State-changing requests (POST / PATCH / PUT / DELETE under `/api/`)
+require a matching `X-CSRF-Token` header. The backend sets a
+non-HttpOnly `mcpanel_csrf` cookie that the SPA reads and echoes back.
+Enforced in both auth modes.
+
+### Dev escape hatch
+
+Set `MC_PANEL_I_KNOW_THIS_IS_UNAUTHENTICATED=true` to skip auth entirely
+— every request becomes `admin@anonymous`. Localhost dev only; **never**
+expose to a real network.
+
+The frontend reads `/api/v1/me` (`useMe()`) for `{user, role, can}` and
+hides controls users can't use; the backend decorator is the source of
+truth.
 
 ## External dependencies (what mc-panel needs from its host)
 
@@ -198,6 +230,11 @@ parentheses where applicable.
 
 | Var | Purpose |
 |---|---|
+| `AUTH_MODE` | Required. `builtin` or `forward-headers`. No default — refuse-to-start otherwise. |
+| `MC_ADMIN_PASSWORD` / `MC_ADMIN_PASSWORD_FILE` | Required on first boot when `AUTH_MODE=builtin`. Once the hash lands in `auth-state.json` the env can be removed. |
+| `MC_COOKIE_SECURE` | Sets the `Secure` flag on session + CSRF cookies. Default `true`. Set `false` only for local-dev HTTP. |
+| `MC_SESSION_TTL_DAYS` | Built-in session lifetime (`7`). |
+| `MC_PANEL_I_KNOW_THIS_IS_UNAUTHENTICATED` | Dev escape hatch. When `true`, AUTH_MODE may be unset and every request becomes admin@anonymous. |
 | `MC_DATA_ROOT` | Single-value form: data root used for both the in-container path and bind-mount source (`/data/minecraft`). Works whenever the two paths can be identical. |
 | `MC_HOST_DATA_ROOT` / `MC_CONTAINER_DATA_ROOT` | Split form. Use when the host path and the in-container path can't match (Docker Desktop file sharing, Podman, userns-remapped rootless Docker). Either alone overrides its side of `MC_DATA_ROOT`. |
 | `MC_PORT_RANGE_START` / `MC_PORT_RANGE_END` | Host port range allocator picks from |

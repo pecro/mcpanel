@@ -9,7 +9,8 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import api, backup, config, watchdog
+from . import api, auth, backup, config, watchdog
+from .csrf import CSRFMiddleware
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("mc-panel")
@@ -17,6 +18,18 @@ log = logging.getLogger("mc-panel")
 
 @contextlib.asynccontextmanager
 async def lifespan(_app):
+    # Refuse to boot on incoherent auth config so misconfigured deployments
+    # fail loudly instead of silently exposing admin endpoints. Then warm
+    # the auth backend so its one-time init (bcrypt bootstrap of the env
+    # password, session-secret generation) happens off the request path.
+    config.validate_auth()
+    auth.backend()
+    log.info(
+        "auth: mode=%s allow_unauthenticated=%s",
+        config.AUTH_MODE or "(none)",
+        config.allow_unauthenticated(),
+    )
+
     tasks: list[asyncio.Task] = []
     if not config.DISABLE_BACKGROUND_LOOPS:
         tasks.append(asyncio.create_task(watchdog.loop()))
@@ -33,7 +46,8 @@ async def lifespan(_app):
                 await t
 
 
-app = FastAPI(title="mc-panel-v2", lifespan=lifespan)
+app = FastAPI(title="mcpanel", lifespan=lifespan)
+app.add_middleware(CSRFMiddleware)
 app.include_router(api.router)
 
 

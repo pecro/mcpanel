@@ -5,6 +5,7 @@ import { api, runJob } from './client';
 import type {
   AdminConfig,
   AppState,
+  AuthStatus,
   BackupIndexEntry,
   Job,
   McVersionsResponse,
@@ -29,12 +30,61 @@ export function useMe() {
   // Identity + role + permission flags. The 403 case (authenticated user
   // not in any panel group) surfaces as ApiError 403 — components consume
   // `data` for the happy path and `error` to render the no-access wall.
+  // The 401 case (no session in built-in mode) is handled by Chrome via
+  // a redirect to /login.
   return useQuery({
     queryKey: ME_KEY,
     queryFn: () => api.get<Me>('/api/v1/me'),
     // Role rarely changes mid-session; cache aggressively.
     staleTime: 5 * 60 * 1000,
     retry: false,
+  });
+}
+
+const AUTH_STATUS_KEY = ['auth-status'] as const;
+
+export function useAuthStatus() {
+  // Public endpoint — never throws. The SPA reads this once on mount to
+  // decide whether the no-session case should redirect to /login (built-in
+  // mode) vs. show "could not reach the panel" (forward-headers mode,
+  // where the proxy itself blocks unauthenticated traffic).
+  return useQuery({
+    queryKey: AUTH_STATUS_KEY,
+    queryFn: () => api.get<AuthStatus>('/api/v1/auth/status'),
+    staleTime: Infinity,
+    retry: false,
+  });
+}
+
+export function useLogin() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (password: string) =>
+      api.post<{ ok: true }>('/api/v1/auth/login', { password }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: AUTH_STATUS_KEY });
+      qc.invalidateQueries({ queryKey: ME_KEY });
+      qc.invalidateQueries({ queryKey: STATE_KEY });
+    },
+  });
+}
+
+export function useLogout() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<{ ok: true }>('/api/v1/auth/logout'),
+    onSuccess: () => {
+      // Drop everything — the SPA is about to bounce to /login and the
+      // next session will refetch from scratch.
+      qc.clear();
+    },
+  });
+}
+
+export function useChangePassword() {
+  return useMutation({
+    mutationFn: (body: { current_password: string; new_password: string }) =>
+      api.post<{ ok: true }>('/api/v1/auth/change-password', body),
   });
 }
 

@@ -16,26 +16,20 @@ from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import admin_config, backup, config, docker_client as dc, jobs, permissions, players, rcon, usage, world
-from .permissions import ADMIN, OPERATOR, USER, current_role, require_role
+from . import admin_config, auth, backup, config, docker_client as dc, jobs, permissions, players, rcon, usage, world
+from .auth import (
+    ADMIN,
+    OPERATOR,
+    USER,
+    current_role,
+    current_user,
+    require_role,
+    require_user,
+)
 
 log = logging.getLogger("mc-panel.api")
 
 router = APIRouter(prefix="/api/v1")
-
-
-# ---------------------------------------------------------------------------
-# Auth — same as v1: trust the Remote-User header set by Authelia
-# ---------------------------------------------------------------------------
-
-def remote_user(request: Request) -> str:
-    return request.headers.get("Remote-User", "").strip()
-
-
-def require_user(request: Request) -> str:
-    """Read-only access (mc-user, mc-operator, or mc-admin). Endpoints that
-    mutate must use `require_role(OPERATOR, request)` or higher instead."""
-    return require_role(USER, request)
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +129,68 @@ def _host_info(request: Request) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Auth — login/logout/change-password for built-in mode; status is public so
+# the SPA can decide whether to show a login page.
+# ---------------------------------------------------------------------------
+
+
+class LoginBody(BaseModel):
+    password: str
+
+
+class ChangePasswordBody(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=8)
+
+
+@router.get("/auth/status")
+def auth_status(request: Request) -> dict:
+    """Unauthenticated probe. The SPA hits this before /me so it knows
+    whether to redirect to the login page (built-in mode, no session) vs.
+    show the no-access wall (forward-headers mode, authenticated but no
+    panel role)."""
+    ident = auth.current_identity(request)
+    return {
+        "mode": "builtin" if auth.is_builtin_mode() else "forward-headers",
+        "authenticated": ident is not None,
+    }
+
+
+@router.post("/auth/login")
+def login(body: LoginBody, request: Request) -> JSONResponse:
+    backend = auth.builtin_backend()
+    if backend is None:
+        raise HTTPException(404, "login is only available in built-in auth mode")
+    response = JSONResponse({"ok": True})
+    if not backend.login(body.password, response):
+        raise HTTPException(401, "invalid password")
+    log.info("login successful")
+    return response
+
+
+@router.post("/auth/logout")
+def logout(request: Request) -> JSONResponse:
+    backend = auth.builtin_backend()
+    response = JSONResponse({"ok": True})
+    if backend is not None:
+        backend.logout(response)
+    return response
+
+
+@router.post("/auth/change-password")
+def change_password(body: ChangePasswordBody, request: Request) -> dict:
+    backend = auth.builtin_backend()
+    if backend is None:
+        raise HTTPException(404, "change-password is only available in built-in auth mode")
+    # Only an authenticated admin can rotate the password.
+    require_role(ADMIN, request)
+    if not backend.change_password(body.current_password, body.new_password):
+        raise HTTPException(400, "current password incorrect")
+    log.info("admin password changed")
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
 # Bootstrap — one call powers TopBar host info, LeftRail world list, Home hero
 # ---------------------------------------------------------------------------
 
@@ -144,7 +200,7 @@ def me(request: Request) -> dict:
     things the user can't do; this is the read side of that. The backend
     decorators stay the source of truth — these flags are just convenience.
 
-    Returns 401 with no Remote-User (Authelia misconfig) and 403 if the
+    Returns 401 when there is no session / no Remote-User, and 403 when the
     user is authenticated but in none of the panel groups (the "no access"
     wall — show the request-access page on the SPA side)."""
     user = require_user(request)  # 401 / 403 baked in
@@ -293,7 +349,7 @@ async def upload_banner(
     # save_banner expects a file-like for shutil.copyfileobj; wrap the bytes.
     import io
     p = world.save_banner(name, io.BytesIO(raw), ext)
-    log.info("banner uploaded for %s by %s (%s, %d bytes)", name, remote_user(request), ext, len(raw))
+    log.info("banner uploaded for %s by %s (%s, %d bytes)", name, current_user(request), ext, len(raw))
     return {"banner_url": f"/api/v1/worlds/{name}/banner?v={int(p.stat().st_mtime)}"}
 
 
@@ -304,7 +360,7 @@ def remove_banner(request: Request, name: str) -> dict:
         raise HTTPException(404, "world not found")
     deleted = world.delete_banner(name)
     if deleted:
-        log.info("banner removed for %s by %s", name, remote_user(request))
+        log.info("banner removed for %s by %s", name, current_user(request))
     return {"deleted": deleted}
 
 
@@ -876,7 +932,7 @@ def download_world(request: Request, name: str):
             except subprocess.TimeoutExpired:
                 proc.kill()
 
-    log.info("download world %s by %s", name, remote_user(request))
+    log.info("download world %s by %s", name, current_user(request))
     return StreamingResponse(
         chunks(),
         media_type="application/zip",
@@ -1019,7 +1075,7 @@ async def import_upload(
         staging_id, staging_dir = world.stage_zip(world_zip.file)
     except ValueError as e:
         raise HTTPException(400, str(e))
-    log.info("import staged from upload: %s by %s", staging_id, remote_user(request))
+    log.info("import staged from upload: %s by %s", staging_id, current_user(request))
     return _staging_response(staging_id, staging_dir)
 
 
@@ -1034,7 +1090,7 @@ async def import_from(request: Request, body: ImportFromBody) -> dict:
         staging_id, staging_dir = world.stage_imports(body.source)
     except ValueError as e:
         raise HTTPException(400, str(e))
-    log.info("import staged from imports/%s: %s by %s", body.source, staging_id, remote_user(request))
+    log.info("import staged from imports/%s: %s by %s", body.source, staging_id, current_user(request))
     return _staging_response(staging_id, staging_dir)
 
 

@@ -1,12 +1,13 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { useLocation } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import { ApiError } from '../../api/client';
-import { useAppState, useMe } from '../../api/queries';
+import { useAppState, useAuthStatus, useMe } from '../../api/queries';
 import { TopBar } from './TopBar';
 import { LeftRail } from './LeftRail';
 
 export function Chrome({ children }: { children: ReactNode }) {
   const me = useMe();
+  const status = useAuthStatus();
   const { data, isLoading, isError } = useAppState();
   const [drawerOpen, setDrawerOpen] = useState(false);
 
@@ -18,11 +19,24 @@ export function Chrome({ children }: { children: ReactNode }) {
     setDrawerOpen(false);
   }, [location.pathname]);
 
-  // 403 from /me means the user is authenticated by Authelia but not in
-  // any of the panel groups (mc-admin/mc-operator/mc-user). Show the
-  // no-access wall instead of the normal app — the LeftRail world list
-  // and TopBar still render (the user can see the app exists), but
-  // <main> is replaced.
+  // In built-in mode, a 401 from /me means "no session yet". Bounce to
+  // /login carrying the current path so we can return after signing in.
+  // In forward-headers mode the upstream proxy intercepts unauthenticated
+  // traffic — we should never see a 401 from /me in that case, but if we
+  // do, fall through to the regular error UI.
+  const unauthenticated =
+    me.error instanceof ApiError &&
+    me.error.status === 401 &&
+    status.data?.mode === 'builtin';
+  if (unauthenticated) {
+    return <Navigate to="/login" state={{ from: location.pathname }} replace />;
+  }
+
+  // 403 from /me means the user is authenticated by the upstream proxy
+  // but not in any of the panel groups (mc-admin/mc-operator/mc-user).
+  // Show the no-access wall instead of the normal app — the LeftRail
+  // world list and TopBar still render (the user can see the app exists),
+  // but <main> is replaced.
   const noAccess = me.error instanceof ApiError && me.error.status === 403;
 
   return (
@@ -44,7 +58,7 @@ export function Chrome({ children }: { children: ReactNode }) {
           <div className="p-6 text-dim">Loading…</div>
         ) : isError ? (
           <div className="p-6 text-danger">
-            Could not reach the panel API. Make sure you're signed in via Authelia.
+            Could not reach the panel API.
           </div>
         ) : (
           children

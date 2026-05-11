@@ -1,12 +1,19 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Navigate } from 'react-router-dom';
 import { ApiError } from '../api/client';
-import { useAdminConfig, useMe, useUpdateAdminConfig } from '../api/queries';
+import {
+  useAdminConfig,
+  useAuthStatus,
+  useChangePassword,
+  useMe,
+  useUpdateAdminConfig,
+} from '../api/queries';
 import { Card, Eyebrow } from '../components/ui/atoms';
 import { GhostBtn, PrimaryBtn } from '../components/ui/Button';
 
 export function Admin() {
   const me = useMe();
+  const status = useAuthStatus();
   // Bounce non-admins. Frontend gate; backend enforces too.
   if (me.data && !me.data.can.admin) return <Navigate to="/" replace />;
   return (
@@ -14,13 +21,14 @@ export function Admin() {
       <div className="mb-5">
         <h1 className="font-headline text-[22px] tracking-[0.05em]">Admin settings</h1>
         <p className="mt-1 text-[13px] text-dim">
-          Panel-wide knobs only mc-admins can change. New-world creation and per-world edits use
+          Panel-wide knobs only admins can change. New-world creation and per-world edits use
           these bounds — operators cannot exceed them.
         </p>
       </div>
       <div className="grid gap-5">
         <MemoryBoundsCard />
         <ConcurrencyCapCard />
+        {status.data?.mode === 'builtin' && <PasswordCard />}
       </div>
     </div>
   );
@@ -161,6 +169,88 @@ function Slider({
         <span>{ceiling} GB</span>
       </div>
     </div>
+  );
+}
+
+function PasswordCard() {
+  const change = useChangePassword();
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [confirm, setConfirm] = useState('');
+
+  const tooShort = next.length > 0 && next.length < 8;
+  const mismatch = confirm.length > 0 && next !== confirm;
+  const ready = current && next.length >= 8 && next === confirm;
+
+  const onSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    change.mutate(
+      { current_password: current, new_password: next },
+      {
+        onSuccess: () => {
+          setCurrent('');
+          setNext('');
+          setConfirm('');
+        },
+      },
+    );
+  };
+
+  return (
+    <Card>
+      <Eyebrow className="mb-2">ADMIN PASSWORD</Eyebrow>
+      <p className="mb-5 text-[12px] text-dim">
+        Rotate the password used to sign in to the panel. The new hash is persisted to{' '}
+        <code>auth-state.json</code> immediately — restart isn't needed.
+      </p>
+      <form onSubmit={onSubmit} className="grid gap-3">
+        <PasswordField label="Current password" value={current} onChange={setCurrent} autoComplete="current-password" />
+        <PasswordField label="New password" value={next} onChange={setNext} autoComplete="new-password" />
+        {tooShort && (
+          <div className="text-[11px] text-danger">Must be at least 8 characters.</div>
+        )}
+        <PasswordField label="Confirm new password" value={confirm} onChange={setConfirm} autoComplete="new-password" />
+        {mismatch && <div className="text-[11px] text-danger">Passwords don't match.</div>}
+        <div className="mt-2 flex items-center gap-3">
+          <PrimaryBtn type="submit" disabled={!ready || change.isPending}>
+            {change.isPending ? 'CHANGING…' : 'CHANGE PASSWORD'}
+          </PrimaryBtn>
+          {change.isError && (
+            <span className="text-[11px] text-danger">
+              {change.error instanceof ApiError ? change.error.message : 'Change failed'}
+            </span>
+          )}
+          {change.isSuccess && (
+            <span className="text-[11px] text-good">Password updated.</span>
+          )}
+        </div>
+      </form>
+    </Card>
+  );
+}
+
+function PasswordField({
+  label,
+  value,
+  onChange,
+  autoComplete,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  autoComplete?: string;
+}) {
+  return (
+    <label className="grid gap-1.5">
+      <span className="font-mono text-[11px] text-dim">{label.toUpperCase()}</span>
+      <input
+        type="password"
+        autoComplete={autoComplete}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="rounded-md border border-line bg-panel-2 px-3 py-2 text-[14px] outline-none focus:border-accent"
+      />
+    </label>
   );
 }
 
