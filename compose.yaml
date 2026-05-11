@@ -35,10 +35,22 @@ services:
       PGID: ${PGID:-1000}
       DOCKER_HOST: tcp://mcpanel-socket-proxy:2375
       DOCKER_NETWORK: ${DOCKER_NETWORK:-mcpanel_default}
+      # Single-value MC_DATA_ROOT works when the host path equals the
+      # in-container path (the simple Linux Docker case). For Docker
+      # Desktop / Podman / rootless setups where the two differ, set
+      # MC_HOST_DATA_ROOT and MC_CONTAINER_DATA_ROOT separately instead.
       MC_DATA_ROOT: ${MC_DATA_ROOT:?set MC_DATA_ROOT to an absolute host path}
+      MC_HOST_DATA_ROOT: ${MC_HOST_DATA_ROOT:-}
+      MC_CONTAINER_DATA_ROOT: ${MC_CONTAINER_DATA_ROOT:-}
       MC_PORT_RANGE_START: ${MC_PORT_RANGE_START:-35550}
       MC_PORT_RANGE_END: ${MC_PORT_RANGE_END:-35559}
-      MINECRAFT_HOSTNAME: ${MINECRAFT_HOSTNAME:-localhost}
+      # Optional. If unset, the UI uses the request Host header.
+      MINECRAFT_HOSTNAME: ${MINECRAFT_HOSTNAME:-}
+      # Role group names mcpanel reads from Remote-Groups. Override to
+      # match whatever your identity provider uses.
+      MC_ADMIN_GROUP: ${MC_ADMIN_GROUP:-mc-admin}
+      MC_OPERATOR_GROUP: ${MC_OPERATOR_GROUP:-mc-operator}
+      MC_USER_GROUP: ${MC_USER_GROUP:-mc-user}
       MC_DEFAULT_VERSION: ${MC_DEFAULT_VERSION:-LATEST}
       MC_DEFAULT_TYPE: ${MC_DEFAULT_TYPE:-VANILLA}
       MC_RCON_PASSWORD: ${MC_RCON_PASSWORD:-mc-panel-rcon}

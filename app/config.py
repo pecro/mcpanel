@@ -3,26 +3,47 @@ from pathlib import Path
 
 DOCKER_HOST = os.environ.get("DOCKER_HOST", "tcp://docker-socket-proxy:2375")
 
-# Bind path inside this container. The host path must equal this so that when
-# we create new MC containers the bind mount resolves on the docker daemon side.
-DATA_ROOT = Path(os.environ.get("MC_DATA_ROOT", "/data/minecraft"))
+# Data root has two distinct addresses:
+#   - the container-side path the panel uses for its own filesystem reads/writes
+#   - the host-side path the panel passes to Docker when constructing bind
+#     mounts on the world containers it spawns
+# When the panel container bind-mounts the host data dir at the same path
+# inside (the simple Linux Docker case), the two are equal and MC_DATA_ROOT
+# alone suffices as a single-value fallback.
+_legacy_data_root = os.environ.get("MC_DATA_ROOT", "").strip()
+_container_data_root = (
+    os.environ.get("MC_CONTAINER_DATA_ROOT", "").strip()
+    or _legacy_data_root
+    or "/data/minecraft"
+)
+_host_data_root = (
+    os.environ.get("MC_HOST_DATA_ROOT", "").strip()
+    or _legacy_data_root
+    or _container_data_root
+)
+DATA_ROOT = Path(_container_data_root)
+HOST_DATA_ROOT = Path(_host_data_root)
+
 WORLDS_DIR = DATA_ROOT / "worlds"
 IMPORTS_DIR = DATA_ROOT / "imports"
 BACKUPS_DIR = DATA_ROOT / "backups"
 STAGING_DIR = DATA_ROOT / ".staging"
 
+# Host-side equivalent of WORLDS_DIR, used only when telling Docker where
+# the world bind mount lives on the host filesystem.
+HOST_WORLDS_DIR = HOST_DATA_ROOT / "worlds"
+
 DOCKER_NETWORK = os.environ.get("DOCKER_NETWORK", "aio_default")
 PORT_RANGE_START = int(os.environ.get("MC_PORT_RANGE_START", "35550"))
 PORT_RANGE_END = int(os.environ.get("MC_PORT_RANGE_END", "35559"))
-# Hostname that PLAYERS use to connect their MC clients. Defaults to the
-# panel's own hostname. Kept as a distinct var in case the operator wants
-# to split the panel UI hostname from the game-connect hostname — for
-# example, when the panel is behind a CDN that won't proxy raw TCP traffic
-# on the world ports.
+# Hostname PLAYERS use to connect their MC clients. If unset, callers fall
+# back to the request Host header so the UI shows whatever the user typed
+# in their browser. Kept as a distinct var (separate from the panel UI
+# hostname) for the case where the panel is behind a CDN that won't proxy
+# raw TCP traffic on the world ports.
 GAME_HOSTNAME = (
     os.environ.get("MC_GAME_HOSTNAME", "").strip()
     or os.environ.get("MINECRAFT_HOSTNAME", "").strip()
-    or "localhost"
 )
 
 DEFAULT_VERSION = os.environ.get("MC_DEFAULT_VERSION", "LATEST")

@@ -198,16 +198,18 @@ parentheses where applicable.
 
 | Var | Purpose |
 |---|---|
-| `MC_DATA_ROOT` | Root for worlds/, backups/, imports/, admin-config.json (`/data/minecraft`) |
+| `MC_DATA_ROOT` | Single-value form: data root used for both the in-container path and bind-mount source (`/data/minecraft`). Works whenever the two paths can be identical. |
+| `MC_HOST_DATA_ROOT` / `MC_CONTAINER_DATA_ROOT` | Split form. Use when the host path and the in-container path can't match (Docker Desktop file sharing, Podman, userns-remapped rootless Docker). Either alone overrides its side of `MC_DATA_ROOT`. |
 | `MC_PORT_RANGE_START` / `MC_PORT_RANGE_END` | Host port range allocator picks from |
-| `MINECRAFT_HOSTNAME` | Connect string shown on world pages, also the Traefik routing host |
+| `MINECRAFT_HOSTNAME` | Connect string shown on world pages. Optional — if unset, mcpanel uses the request `Host` header. |
+| `MC_ADMIN_GROUP` / `MC_OPERATOR_GROUP` / `MC_USER_GROUP` | Identity-provider group names mapped to the three mcpanel roles (`mc-admin` / `mc-operator` / `mc-user`). Override for IdPs that use different naming. |
 | `MC_DEFAULT_VERSION` | Default version env for new worlds (`LATEST`) |
 | `MC_DEFAULT_TYPE` | Default server type (`VANILLA`; also accepts `PAPER`/`FABRIC`/`FORGE`) |
 | `MC_RCON_PASSWORD` | Applied to every world container; reachable only on the docker network |
 | `MC_BACKUP_HOUR` | Daily backup runs at this local hour, 24h (`3`) |
 | `MC_BACKUP_RETENTION_DAYS` | Retention sweep TTL; permanent snapshots are exempt (`7`) |
-| `MC_PANEL_APPRISE_URL` | Optional. POST endpoint for multi-awake watchdog notifications |
-| `DOCKER_HOST` | Where to reach the socket proxy (`tcp://mc-panel-socket-proxy:2375`) |
+| `APPRISE_URL` | Optional. POST endpoint for multi-awake watchdog notifications |
+| `DOCKER_HOST` | Where to reach the socket proxy (`tcp://mcpanel-socket-proxy:2375`) |
 | `DOCKER_NETWORK` | Network world containers join (so RCON over the docker network works) |
 | `PUID` / `PGID` | Container runs as this UID:GID; matches the itzg `UID`/`GID` env so file ownership is consistent |
 | `TZ` | Timezone for backup scheduler |

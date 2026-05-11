@@ -18,6 +18,7 @@ roles database, separate from lldap)."""
 from __future__ import annotations
 
 import logging
+import os
 
 from fastapi import HTTPException, Request
 
@@ -27,11 +28,19 @@ ADMIN = "admin"
 OPERATOR = "operator"
 USER = "user"
 
-# lldap group → mc-panel role. Update both this and `_RANK` to add a tier.
+# Group names are parameterized so deployments can use whatever role groups
+# their identity provider already has (Authelia + lldap, Authentik, etc.).
+# Defaults match the historical setup.
+_ADMIN_GROUP = os.environ.get("MC_ADMIN_GROUP", "mc-admin").strip() or "mc-admin"
+_OPERATOR_GROUP = os.environ.get("MC_OPERATOR_GROUP", "mc-operator").strip() or "mc-operator"
+_USER_GROUP = os.environ.get("MC_USER_GROUP", "mc-user").strip() or "mc-user"
+
+# Identity-provider group → mcpanel role. Update both this and `_RANK` to
+# add a tier.
 _GROUP_TO_ROLE = {
-    "mc-admin": ADMIN,
-    "mc-operator": OPERATOR,
-    "mc-user": USER,
+    _ADMIN_GROUP: ADMIN,
+    _OPERATOR_GROUP: OPERATOR,
+    _USER_GROUP: USER,
 }
 
 # Larger number = more permissive. `require_role(OPERATOR, ...)` passes for

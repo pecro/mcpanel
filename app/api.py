@@ -80,7 +80,19 @@ def _world_summary(w: world.World) -> dict:
     }
 
 
-def _world_detail(w: world.World) -> dict:
+def _resolve_hostname(request: Request) -> str:
+    """Explicit MC_GAME_HOSTNAME / MINECRAFT_HOSTNAME wins; otherwise fall
+    back to whatever the user typed into their browser, with a final
+    'localhost' default for the edge case of no Host header at all."""
+    if config.GAME_HOSTNAME:
+        return config.GAME_HOSTNAME
+    host = request.headers.get("Host", "").strip()
+    if host:
+        return host.split(":", 1)[0]
+    return "localhost"
+
+
+def _world_detail(w: world.World, request: Request) -> dict:
     name = w.name
     return {
         **_world_summary(w),
@@ -89,7 +101,7 @@ def _world_detail(w: world.World) -> dict:
         "ops": world.read_name_list(name, "ops.json"),
         "backups": backup.list_backups(name),
         "retention_days": config.BACKUP_RETENTION_DAYS,
-        "game_hostname": config.GAME_HOSTNAME,
+        "game_hostname": _resolve_hostname(request),
     }
 
 
@@ -111,9 +123,9 @@ def _spawn_job(kind: jobs.JobKind, target: str, fn, *args, **kwargs) -> JSONResp
     return JSONResponse(status_code=202, content={"job_id": job.id})
 
 
-def _host_info() -> dict:
+def _host_info(request: Request) -> dict:
     return {
-        "game_hostname": config.GAME_HOSTNAME,
+        "game_hostname": _resolve_hostname(request),
         "port_range": [config.PORT_RANGE_START, config.PORT_RANGE_END],
         "default_version": config.DEFAULT_VERSION,
         "default_type": config.DEFAULT_TYPE,
@@ -155,7 +167,7 @@ def state(request: Request) -> dict:
         "user": user,
         "worlds": [_world_summary(w) for w in dc.list_worlds()],
         "imports": world.list_imports(),
-        "host": _host_info(),
+        "host": _host_info(request),
     }
 
 
@@ -214,7 +226,7 @@ def world_detail(request: Request, name: str) -> dict:
     w = dc.get_world(name)
     if w is None:
         raise HTTPException(404, "world not found")
-    return _world_detail(w)
+    return _world_detail(w, request)
 
 
 # --- Banner image (replaces the procedural HeroBand on the world page) ----
@@ -388,7 +400,7 @@ async def create_world(request: Request, body: CreateWorldBody) -> JSONResponse:
         )
         log.info("created world %s on port %s memory=%dG (user=%s)", name, port, memory_gb, user)
         w = dc.get_world(name)
-        return _world_detail(w) if w else {"name": name, "port": port}
+        return _world_detail(w, request) if w else {"name": name, "port": port}
 
     return _spawn_job("create", name, _create)
 
@@ -1097,6 +1109,6 @@ async def import_commit(request: Request, staging_id: str, body: ImportCommitBod
         )
         log.info("imported world %s on port %s (user=%s)", name, port, user)
         w = dc.get_world(name)
-        return _world_detail(w) if w else {"name": name, "port": port}
+        return _world_detail(w, request) if w else {"name": name, "port": port}
 
     return _spawn_job("create", name, _import)

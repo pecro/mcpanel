@@ -61,10 +61,9 @@ function NoAccessWall() {
         <div className="mb-3 font-headline text-[14px] tracking-[0.15em] text-dim">NO ACCESS</div>
         <h2 className="mb-3 text-[18px] font-semibold">You're signed in, but not allowed in mcpanel</h2>
         <p className="mb-6 text-[13px] leading-relaxed text-dim">
-          You need to be a member of <code className="text-text">mc-admin</code>,{' '}
-          <code className="text-text">mc-operator</code>, or{' '}
-          <code className="text-text">mc-user</code> in your identity provider. Ask the host
-          operator to grant you a role.
+          You need to be in one of the groups your operator mapped to an
+          mcpanel role (admin, operator, or user) in your identity provider.
+          Ask the host operator to grant you a role.
         </p>
       </div>
     </div>

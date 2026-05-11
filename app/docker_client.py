@@ -143,7 +143,7 @@ def create_container(
     memory_gb: int | None = None,
 ) -> Container:
     container_name = f"{config.CONTAINER_PREFIX}{name}"
-    host_world_path = str(config.WORLDS_DIR / name)
+    host_world_path = str(config.HOST_WORLDS_DIR / name)
     _ensure_image(_ITZG_IMAGE)
     memory_env = f"{memory_gb}G" if memory_gb else config.MEMORY
     env = {
