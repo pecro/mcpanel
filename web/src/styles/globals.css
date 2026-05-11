@@ -1,0 +1,82 @@
+@import './tokens.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body, #root {
+    height: 100%;
+  }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 13px;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection {
+    background: color-mix(in srgb, var(--accent) 35%, transparent);
+  }
+}
+
+@layer utilities {
+  .pixel {
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+  }
+
+  .nice-scroll::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  .nice-scroll::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 6px;
+  }
+  .nice-scroll::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 0, 0, 0.35);
+  }
+
+  /* eyebrow text — small Press Start 2P labels, all-caps via the font */
+  .eyebrow {
+    font-family: 'Press Start 2P', monospace;
+    letter-spacing: 0.15em;
+    color: var(--dim);
+    text-transform: uppercase;
+  }
+}
+
+@layer components {
+  /* Block textures used as world-card avatars and hero foreground.
+     Layered radial-gradients simulate pixel surface depth. */
+  .tex-grass-side {
+    background-color: #6b4a2b;
+    background-image:
+      linear-gradient(180deg, #7cb342 0 10px, transparent 10px),
+      radial-gradient(rgba(0, 0, 0, 0.3) 1px, transparent 1px),
+      linear-gradient(135deg, #6b4a2b 0%, #5a3d22 100%);
+    background-size: 100% 100%, 6px 6px, 100% 100%;
+  }
+  .tex-stone {
+    background-color: #7d7d7d;
+    background-image:
+      radial-gradient(rgba(0, 0, 0, 0.25) 1px, transparent 1px),
+      radial-gradient(rgba(255, 255, 255, 0.07) 1px, transparent 1px),
+      linear-gradient(180deg, #888 0%, #6b6b6b 100%);
+    background-size: 5px 5px, 9px 9px, 100% 100%;
+    background-position: 0 0, 2px 3px, 0 0;
+  }
+
+  /* Indeterminate progress bar — used by the import dialog while the
+     server is extracting an uploaded zip. A fixed-width swatch slides
+     left-to-right inside its track. */
+  .indeterminate-bar {
+    width: 35%;
+    animation: indeterminate-slide 1.4s ease-in-out infinite;
+  }
+  @keyframes indeterminate-slide {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(286%); }
+  }
+}

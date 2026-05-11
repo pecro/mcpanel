@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# Node / Vite
+web/node_modules/
+web/dist/
+web/*.tsbuildinfo
+
+# Local data + runtime
+data/
+tmp/
+.env
+
+# Archives / scratch
+*.zip
+
+# Editor / OS
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/

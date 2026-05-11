@@ -1,0 +1,41 @@
+/* Design tokens for mc-panel v2. Values lifted verbatim from the design
+   handoff README. Dark theme only for Phase 1 — light theme is deferred. */
+
+:root {
+  /* surfaces */
+  --bg: #0e1014;
+  --panel: #15181f;
+  --panel-2: #1b1f28;
+  --line: #262a35;
+
+  /* text */
+  --text: #e8eaef;
+  --dim: #8a90a0;
+  --sub: #5a6172;
+
+  /* semantic */
+  --warn: #fbbf24;
+  --danger: #ef4444;
+  --good: #3ddc84;
+
+  /* accent */
+  --accent: #7cb342;
+  --accent-fg: #10180a;
+  --accent-shadow: color-mix(in srgb, var(--accent) 70%, black);
+
+  /* radii */
+  --radius-sm: 6px;
+  --radius: 8px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --radius-xl: 14px;
+
+  /* spacing scale (4-based) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+}

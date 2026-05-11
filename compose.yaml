@@ -1,0 +1,60 @@
+# Standalone single-host compose for mcpanel.
+#
+# NOTE: this release still expects forward-auth headers (Remote-User /
+# Remote-Groups) from an upstream proxy. Running it without an auth proxy
+# in front will return 401 on every request. Built-in single-admin auth
+# is planned — see README.md.
+#
+# Required: copy .env.example to .env and set MC_DATA_ROOT.
+#   cp .env.example .env
+#   docker compose up -d --build
+
+services:
+  mcpanel-socket-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    container_name: mcpanel-socket-proxy
+    restart: unless-stopped
+    environment:
+      CONTAINERS: 1
+      IMAGES: 1
+      NETWORKS: 1
+      INFO: 1
+      VERSION: 1
+      POST: 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  mcpanel:
+    build: .
+    container_name: mcpanel
+    restart: unless-stopped
+    user: "${PUID:-1000}:${PGID:-1000}"
+    environment:
+      TZ: ${TZ:-Etc/UTC}
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      DOCKER_HOST: tcp://mcpanel-socket-proxy:2375
+      DOCKER_NETWORK: ${DOCKER_NETWORK:-mcpanel_default}
+      MC_DATA_ROOT: ${MC_DATA_ROOT:?set MC_DATA_ROOT to an absolute host path}
+      MC_PORT_RANGE_START: ${MC_PORT_RANGE_START:-35550}
+      MC_PORT_RANGE_END: ${MC_PORT_RANGE_END:-35559}
+      MINECRAFT_HOSTNAME: ${MINECRAFT_HOSTNAME:-localhost}
+      MC_DEFAULT_VERSION: ${MC_DEFAULT_VERSION:-LATEST}
+      MC_DEFAULT_TYPE: ${MC_DEFAULT_TYPE:-VANILLA}
+      MC_RCON_PASSWORD: ${MC_RCON_PASSWORD:-mc-panel-rcon}
+      MC_BACKUP_HOUR: ${MC_BACKUP_HOUR:-3}
+      MC_BACKUP_RETENTION_DAYS: ${MC_BACKUP_RETENTION_DAYS:-7}
+      APPRISE_URL: ${APPRISE_URL:-}
+    ports:
+      - "${MCPANEL_HTTP_PORT:-8000}:8000"
+      - "${MC_PORT_RANGE_START:-35550}-${MC_PORT_RANGE_END:-35559}:${MC_PORT_RANGE_START:-35550}-${MC_PORT_RANGE_END:-35559}"
+    volumes:
+      - "${MC_DATA_ROOT}:${MC_DATA_ROOT}"
+    depends_on:
+      - mcpanel-socket-proxy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8000/healthz\")' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s

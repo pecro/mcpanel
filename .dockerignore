@@ -1,0 +1,31 @@
+.git
+.gitignore
+.github
+.dockerignore
+README.md
+LICENSE
+compose.yaml
+.env
+.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Node
+web/node_modules/
+web/dist/
+web/*.tsbuildinfo
+
+# Local data + scratch
+data/
+tmp/
+*.zip
+
+# Editor / OS
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/
