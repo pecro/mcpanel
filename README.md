@@ -1,177 +1,128 @@
 # mcpanel
 
-A self-hostable web panel for running multiple Minecraft servers on a single
-host. Designed to give a non-technical user full ownership of "their" server
-while keeping the host operator out of the loop for day-to-day ops, with
-admin-only knobs reserved for the operator of the host.
+A self-hostable web panel for running **multiple Minecraft worlds** on a
+single Docker host. Each world is its own `itzg/minecraft-server`
+container; mcpanel manages lifecycle, version, properties, players,
+backups, and per-world JVM memory.
 
-> **Status:** early extraction from a private monorepo. The auth model is
-> selectable: a built-in single-admin password backend (default for fresh
-> deployments) or a forward-auth mode that consumes `Remote-User` /
-> `Remote-Groups` headers from an upstream proxy (Authelia, Authentik,
-> Pocket-ID, ...). See [Auth](#auth-model) and the [roadmap](#roadmap).
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Image: ghcr.io/pecro/mcpanel](https://img.shields.io/badge/image-ghcr.io%2Fpecro%2Fmcpanel-blue)](https://github.com/pecro/mcpanel/pkgs/container/mcpanel)
+[![CI](https://github.com/pecro/mcpanel/actions/workflows/docker.yml/badge.svg)](https://github.com/pecro/mcpanel/actions/workflows/docker.yml)
 
-## What it does
+> **Status: pre-1.0.** Single-developer project, working but not yet
+> hardened by external use. Issues and PRs welcome. Behaviour may shift
+> between minor versions until `v1.0.0`.
 
-- **Multi-world**: spin up an arbitrary number of Minecraft worlds. Each one is
-  a separate `itzg/minecraft-server` container with its own world dir, port,
-  RCON, and lifecycle.
-- **Web admin** at `https://mcpanel.example.com`. Per-world detail page with
-  whitelist/op management, properties editor, banner image, version chip, live
-  console, and a usage chart (RAM/CPU over time).
-- **Game ports** published directly on the host (`35550-35559`); players
-  connect via `mcpanel.example.com:<port>`.
-- **Versions**: pick from Mojang's official manifest (`LATEST` / `SNAPSHOT` /
-  any specific release). The version chip auto-updates after Minecraft's
-  data-fixer rewrites `level.dat`, with an `(upgrading…)` badge during the
-  migration window so users know to wait.
-- **Backups**: nightly auto with retention pruning. Operators can also
-  trigger ad-hoc backups, save **named permanent snapshots** (pinned, never
-  pruned), edit metadata, and restore. Backups capture the world version at
-  snapshot time. Delete is admin-only.
-- **Memory**: per-world JVM heap with admin-set bounds (`world_memory_min_gb`
-  / `world_memory_max_gb`). Container cgroup limit auto-adds 1 GiB headroom
-  to stop OOM kills (lesson learned).
-- **Concurrency cap**: admin-set max concurrent running worlds (default 1).
-  START is gated server-side; SPA pre-disables the button when at cap.
-- **Three-tier role gate** keyed off lldap groups Authelia forwards:
-  `mc-admin > mc-operator > mc-user`. Backend decorators are the source of
-  truth; SPA hides controls users can't use.
-- **Banner uploads** per world (PNG/JPG/WEBP/GIF, ≤10 MB) replace the
-  procedural sky+landscape on the hero card.
+---
 
-## Architecture
+## Why this exists
 
-```
-                     Internet
-        ┌──────────────┼─────────────────────┐
-        ▼              ▼                     ▼
-   :443 (Traefik)   :35550…:35559     other selhost services
-        │              │
-        │              ▼
-        │         mc-<world1>, mc-<world2>, …    ← itzg/minecraft-server
-        │         per-world container, per-world world dir
-        │              ▲
-        ▼              │ docker create/start/stop/remove (narrow API)
-   mc-panel ───► docker-socket-proxy ───► /var/run/docker.sock
-   (FastAPI + React SPA)                  on the host
-        │
-        ▼
-   bind mount ${MC_DATA_ROOT}
-       worlds/<name>/        ← world data (level.dat, server.properties, etc.)
-       backups/<name>/       ← .zip + .meta.json sidecar pairs
-       imports/              ← uploaded zips waiting on staging
-       admin-config.json     ← admin's bounds + concurrency cap
-```
+I wanted to hand a non-technical friend their own Minecraft server with
+the same affordances a managed host (Realms, Apex, etc.) gives you —
+versions, backups, whitelist, properties — without surrendering ops or
+paying a subscription. The result is opinionated:
 
-### Components in production
+- **One Docker host, many worlds.** No agent/wings architecture. The
+  panel speaks to a narrowly-scoped Docker socket proxy and spawns
+  `itzg/minecraft-server` containers directly.
+- **Tight `itzg` integration.** Worlds inherit `itzg`'s version handling,
+  Mojang manifest lookup, RCON wiring, and EULA acceptance — mcpanel
+  doesn't re-implement them.
+- **Two-role co-admin model.** Designate someone an *operator*: they can
+  run, restart, edit, and back up worlds without being able to delete
+  anything or change panel-wide settings. Useful for "let a friend run
+  their world without giving them keys to the host."
 
-| Container | Image | Purpose |
-|---|---|---|
-| `mc-panel` | built locally from `Dockerfile` | FastAPI backend + Vite-built React SPA, single image |
-| `mc-panel-socket-proxy` | `tecnativa/docker-socket-proxy` | Mediates the panel's Docker API calls; allowlist is `CONTAINERS=1 IMAGES=1 NETWORKS=1 INFO=1 VERSION=1 POST=1` |
-| `mc-<world>` | `itzg/minecraft-server:latest` | One per world. The panel creates/starts/stops/removes these. |
+## Is this for you?
 
-The panel never touches `/var/run/docker.sock` directly — the socket proxy is
-the security boundary.
+|                       | mcpanel | [Crafty Controller](https://craftycontrol.com/) | [Pterodactyl](https://pterodactyl.io/) | [AMP](https://cubecoders.com/AMP) |
+|-----------------------|---------|-----|-----|-----|
+| Multi-world           | ✅      | ✅  | ✅  | ✅  |
+| Multi-game            | ❌ MC only | ✅  | ✅  | ✅  |
+| Agent/node deploys    | ❌      | ❌  | ✅  | ✅  |
+| Single Docker host    | ✅      | ✅  | ⚠️  | ⚠️  |
+| `itzg/minecraft-server` native | ✅ | ❌ | ❌ | ❌ |
+| External SSO (forward-auth) | ✅ | ⚠️ | ⚠️ | ⚠️ |
+| License               | MIT     | GPL-3 | MIT | proprietary |
 
-### Tech stack
+**mcpanel is for you if** you're already a Docker-on-a-VPS self-hoster,
+you want to run a small number of Minecraft worlds, you trust the `itzg`
+ecosystem, and you'd rather have one opinionated panel than a generic
+game-hosting framework. **It's not for you if** you need multi-game
+support, multi-node clustering, or per-customer tenancy.
 
-**Backend** — FastAPI + uvicorn, Python 3.13, deps in `requirements.txt`:
-- `docker` SDK for container ops via the socket proxy
-- `httpx` for Mojang manifest + Mojang username→UUID lookups
-- `nbt` for parsing `level.dat` (extracts the resolved MC version)
-- `python-multipart` for upload endpoints
-- No database — state lives on disk (world dirs, backup sidecars, JSON config)
+## Quickstart
 
-**Frontend** — `web/` is a Vite + React 18 SPA:
-- `@tanstack/react-query` v5 for server state
-- `react-router-dom` v7 for routing
-- `react-hook-form` + `zod` for forms
-- `tailwindcss` v3 for styling, custom palette in `web/src/styles/`
-- TypeScript
+```bash
+# 1. Grab the standalone compose
+curl -O https://raw.githubusercontent.com/pecro/mcpanel/main/compose.yaml
+curl -O https://raw.githubusercontent.com/pecro/mcpanel/main/.env.example
+cp .env.example .env
 
-**Build** — single multi-stage Dockerfile:
-1. `node:22-alpine` builds the SPA (`npm ci && npm run build` → `dist/`)
-2. `astral-sh/uv:python3.13-bookworm-slim` installs Python deps, copies the
-   built SPA into `/srv/app/web_dist`, and runs `python -m app.main`
+# 2. Edit .env: set MC_DATA_ROOT to an absolute host path, set
+#    MC_ADMIN_PASSWORD to your initial password, set MC_COOKIE_SECURE=false
+#    if you're testing on plain http://localhost.
+$EDITOR .env
 
-## Repo layout
-
-```
-apps/mc-panel/                  ← top of the new repo when extracted
-├── Dockerfile                  multi-stage web + python build
-├── README.md                   this file
-├── requirements.txt            Python deps (will likely move to pyproject)
-├── compose.yaml                deployment definition (selhost-style today)
-├── app/                        Python backend (~3,000 lines)
-│   ├── main.py                 uvicorn entrypoint, mounts SPA at /, routes /api/v1/*
-│   ├── api.py                  every HTTP endpoint (1,100 lines — the bulk of behaviour)
-│   ├── permissions.py          three-tier role gate from Remote-Groups header
-│   ├── admin_config.py         persisted admin bounds (memory range, concurrency cap)
-│   ├── docker_client.py        wraps the Docker SDK; container create/start/stop/recreate
-│   ├── world.py                world dir layout, name validation, banner storage,
-│   │                           import staging, level.dat helpers, archive on delete
-│   ├── backup.py               zip + RCON-flush + sidecar metadata + retention pruning
-│   ├── jobs.py                 in-memory single-flight job queue with TTL
-│   ├── usage.py                per-world RAM/CPU sampling + ring buffer
-│   ├── rcon.py                 minimal RCON client for save-flush + console
-│   ├── players.py              cross-world UUID/name registry for whitelist autocomplete
-│   ├── watchdog.py             optional Apprise notifications on multi-awake events
-│   ├── level_dat.py            NBT parsing, only what the panel needs
-│   └── config.py               env-var driven settings, DATA_ROOT layout
-└── web/                        React SPA
-    ├── package.json
-    ├── vite.config.ts
-    ├── tailwind.config.ts
-    ├── tsconfig.json
-    └── src/
-        ├── main.tsx, App.tsx       router + chrome shell
-        ├── api/                    fetch wrappers, query hooks, types
-        │   ├── client.ts           api.{get,post,patch,del}, runJob, uploadWithProgress
-        │   ├── queries.ts          one hook per endpoint group (~600 lines)
-        │   └── types.ts            mirrors the JSON shapes from app/api.py
-        ├── pages/                  route components
-        │   ├── Home.tsx            featured-world hero + tabs
-        │   ├── NewWorld.tsx        create form
-        │   ├── WorldFrame.tsx      per-world shell (hero + sidebar cards + tabs)
-        │   ├── WorldOverview.tsx
-        │   ├── WorldUsage.tsx      RAM/CPU chart with window picker
-        │   ├── Backups.tsx         cross-world backup list with edit/pin/restore
-        │   ├── Console.tsx         live RCON console (operator+)
-        │   ├── Import.tsx          two-step import-confirm flow
-        │   └── Admin.tsx           admin-only knobs (memory bounds + concurrency cap)
-        ├── components/
-        │   ├── chrome/             TopBar (with role chip), LeftRail, Chrome shell
-        │   ├── world/              ConnectHero, Sidebar cards, DangerCard, MemoryCard,
-        │   │                       PropertiesCard, PlayersCard, BackupsCard, LiveConsole
-        │   ├── home/               Hero, HomeTabs, AwakeWarning, CreateWorldForm,
-        │   │                       ImportDialog
-        │   ├── art/                HeroBand (procedural sky+landscape, accepts banner override)
-        │   └── ui/                 Button, Field, atoms (Card, KeyValue, etc.)
-        └── hooks/                  useClipboard, useDebounce
+# 3. Up
+docker compose up -d
+docker compose logs -f mcpanel
 ```
 
-## Auth model
+Open `http://localhost:8000`, sign in as `admin` with the password you
+set, and create your first world. The bootstrap password gets bcrypt-
+hashed into `auth-state.json` on first login — you can drop it from `.env`
+after that and rotate it via **Admin → Admin password**.
 
-`AUTH_MODE` picks the backend (required env, no default):
+For a real deployment behind TLS, put a reverse proxy in front (nginx,
+Caddy, Traefik) and set `MC_COOKIE_SECURE=true`.
+
+## Features
+
+- **Multi-world.** Each world is its own container with its own data dir,
+  port (from the configurable `MC_PORT_RANGE_START..END` range), and JVM
+  memory cap.
+- **Versions.** Pick from Mojang's official manifest (`LATEST` /
+  `SNAPSHOT` / any specific release). Resolved version is read back from
+  `level.dat` after the data-fixer runs; an `(upgrading…)` chip shows
+  during the migration window.
+- **Backups.** Nightly auto-backup with retention pruning. Operators can
+  trigger ad-hoc backups, save **permanent named snapshots** (pinned,
+  never pruned), edit metadata, and restore. Backups capture the world
+  version at snapshot time.
+- **Memory.** Admin sets the `[min, max]` GB window; per-world memory is
+  picked inside it. Container cgroup limit auto-adds 1 GiB headroom over
+  `-Xmx` to stop OOM kills.
+- **Concurrency cap.** Admin-set max concurrent running worlds; START is
+  gated server-side.
+- **Live console + RCON.** Stream stdout/stderr; send commands.
+- **Whitelist / ops.** Per-world editing of `whitelist.json` and
+  `ops.json`.
+- **Banner uploads.** PNG/JPG/WEBP/GIF, ≤ 10 MB, replaces the procedural
+  hero card per world.
+- **Per-world stats.** CPU + RAM usage chart, player join/leave timeline.
+- **Imports.** Drop a world zip; mcpanel sniffs version + type, stages,
+  and lets you commit as a new world.
+
+## Auth
+
+`AUTH_MODE` is required (no default — refuse-to-start otherwise):
 
 ### `AUTH_MODE=builtin` — single-admin password
 
-A bcrypt-hashed password gates access; sessions are signed cookies. The
-admin role is implicit — everyone who signs in is admin. Bootstrap on
-first run with `MC_ADMIN_PASSWORD` (or `MC_ADMIN_PASSWORD_FILE` for
-Docker secrets). The hash and the cookie-signing secret are persisted to
-`auth-state.json` inside the data dir; the env var can be removed after
-first sign-in. Rotate via the **Admin → Admin password** form, which
-overwrites the persisted hash with no restart needed.
+bcrypt-hashed password gates access; sessions are signed cookies (TTL
+configurable via `MC_SESSION_TTL_DAYS`, default 7). Everyone who signs in
+is admin — multi-user with roles requires `forward-headers` mode.
 
-### `AUTH_MODE=forward-headers` — proxy-fronted, role-mapped
+Bootstrap with `MC_ADMIN_PASSWORD` (or `MC_ADMIN_PASSWORD_FILE` for
+Docker secrets). Once you've signed in, the hash and the cookie-signing
+secret are persisted to `auth-state.json` in your data dir; the env can
+be removed. Rotate via **Admin → Admin password** with no restart.
+
+### `AUTH_MODE=forward-headers` — SSO via upstream proxy
 
 Identity comes from `Remote-User`; roles come from `Remote-Groups`,
-mapped onto the three panel tiers via `MC_ADMIN_GROUP` /
-`MC_OPERATOR_GROUP` / `MC_USER_GROUP` (defaults `mc-admin` /
-`mc-operator` / `mc-user`).
+mapped onto three panel tiers:
 
 | Role | Can |
 |---|---|
@@ -180,80 +131,96 @@ mapped onto the three panel tiers via `MC_ADMIN_GROUP` /
 | user | read-only: view worlds + stats, download backups, no mutations |
 | (none) | 403 with a "request access" wall |
 
-Hierarchy is enforced server-side by `app/auth.py:require_role`.
-Most-permissive group wins for users in multiple. There is **no in-app
-role authoring** by design — adding a fourth tier means adding the
-identity-provider group and extending the `_GROUP_TO_ROLE` map in
-`permissions.py`.
+Group names default to `mc-admin` / `mc-operator` / `mc-user`; override
+via `MC_ADMIN_GROUP` / `MC_OPERATOR_GROUP` / `MC_USER_GROUP` to match
+whatever your identity provider already has. Works with any forward-auth
+proxy that sets `Remote-User` + `Remote-Groups` — Authelia, Authentik,
+Pocket-ID, etc. **Do not run this mode without a proxy in front** — the
+panel trusts headers it receives, and direct external traffic could
+forge them.
 
 ### CSRF
 
-State-changing requests (POST / PATCH / PUT / DELETE under `/api/`)
-require a matching `X-CSRF-Token` header. The backend sets a
-non-HttpOnly `mcpanel_csrf` cookie that the SPA reads and echoes back.
-Enforced in both auth modes.
+State-changing requests (POST / PUT / PATCH / DELETE under `/api/`)
+require a matching `X-CSRF-Token` header. mcpanel sets a non-HttpOnly
+`mcpanel_csrf` cookie that the SPA reads and echoes back. Enforced in
+both auth modes.
 
 ### Dev escape hatch
 
-Set `MC_PANEL_I_KNOW_THIS_IS_UNAUTHENTICATED=true` to skip auth entirely
-— every request becomes `admin@anonymous`. Localhost dev only; **never**
-expose to a real network.
-
-The frontend reads `/api/v1/me` (`useMe()`) for `{user, role, can}` and
-hides controls users can't use; the backend decorator is the source of
-truth.
-
-## External dependencies (what mc-panel needs from its host)
-
-These don't need to be in the same repo, but the panel doesn't run without
-them.
-
-1. **Docker daemon** — the host's Docker daemon, mediated through
-   `tecnativa/docker-socket-proxy`. The proxy must allowlist
-   `CONTAINERS,IMAGES,NETWORKS,INFO,VERSION,POST` (see `compose.yaml`).
-2. **Reverse proxy with TLS** — Traefik in selhost-main, routed via the
-   `authelia@docker` middleware. Any reverse proxy that adds `Remote-User`
-   and `Remote-Groups` headers from an OIDC/SSO source will work.
-3. **Authelia + LLDAP** (or any equivalent) for identity and the three
-   panel groups.
-4. **Bind-mount path** under `${MC_DATA_ROOT}` — defaults to
-   `/data/minecraft`. The path must be **identical inside the panel
-   container and on the docker daemon's host filesystem** because the panel
-   asks Docker to bind-mount paths it can also read locally.
+`MC_PANEL_I_KNOW_THIS_IS_UNAUTHENTICATED=true` skips auth entirely —
+every request becomes `admin@anonymous`. Localhost dev only; **never**
+expose to a real network. mcpanel logs a loud warning on boot.
 
 ## Configuration
 
-### Environment variables
+All env vars live on the `mcpanel` service in `compose.yaml`. Defaults
+shown in parentheses.
 
-Defined on the `mc-panel` service in `compose.yaml`. Defaults shown in
-parentheses where applicable.
+### Required
 
 | Var | Purpose |
 |---|---|
-| `AUTH_MODE` | Required. `builtin` or `forward-headers`. No default — refuse-to-start otherwise. |
-| `MC_ADMIN_PASSWORD` / `MC_ADMIN_PASSWORD_FILE` | Required on first boot when `AUTH_MODE=builtin`. Once the hash lands in `auth-state.json` the env can be removed. |
-| `MC_COOKIE_SECURE` | Sets the `Secure` flag on session + CSRF cookies. Default `true`. Set `false` only for local-dev HTTP. |
+| `AUTH_MODE` | `builtin` or `forward-headers`. No default. |
+| `MC_DATA_ROOT` | Absolute host path where mcpanel stores worlds, backups, imports. Must be writable by `PUID:PGID`. |
+
+### Required in built-in mode (first boot only)
+
+| Var | Purpose |
+|---|---|
+| `MC_ADMIN_PASSWORD` | Bootstrap admin password. Removed after first sign-in once the hash lands in `auth-state.json`. |
+| `MC_ADMIN_PASSWORD_FILE` | Alternative: path to a file containing the password (Docker secrets). `_FILE` wins if both are set. |
+
+### Auth tuning
+
+| Var | Purpose |
+|---|---|
 | `MC_SESSION_TTL_DAYS` | Built-in session lifetime (`7`). |
-| `MC_PANEL_I_KNOW_THIS_IS_UNAUTHENTICATED` | Dev escape hatch. When `true`, AUTH_MODE may be unset and every request becomes admin@anonymous. |
-| `MC_DATA_ROOT` | Single-value form: data root used for both the in-container path and bind-mount source (`/data/minecraft`). Works whenever the two paths can be identical. |
-| `MC_HOST_DATA_ROOT` / `MC_CONTAINER_DATA_ROOT` | Split form. Use when the host path and the in-container path can't match (Docker Desktop file sharing, Podman, userns-remapped rootless Docker). Either alone overrides its side of `MC_DATA_ROOT`. |
-| `MC_PORT_RANGE_START` / `MC_PORT_RANGE_END` | Host port range allocator picks from |
-| `MINECRAFT_HOSTNAME` | Connect string shown on world pages. Optional — if unset, mcpanel uses the request `Host` header. |
-| `MC_ADMIN_GROUP` / `MC_OPERATOR_GROUP` / `MC_USER_GROUP` | Identity-provider group names mapped to the three mcpanel roles (`mc-admin` / `mc-operator` / `mc-user`). Override for IdPs that use different naming. |
-| `MC_DEFAULT_VERSION` | Default version env for new worlds (`LATEST`) |
-| `MC_DEFAULT_TYPE` | Default server type (`VANILLA`; also accepts `PAPER`/`FABRIC`/`FORGE`) |
-| `MC_RCON_PASSWORD` | Applied to every world container; reachable only on the docker network |
-| `MC_BACKUP_HOUR` | Daily backup runs at this local hour, 24h (`3`) |
-| `MC_BACKUP_RETENTION_DAYS` | Retention sweep TTL; permanent snapshots are exempt (`7`) |
-| `APPRISE_URL` | Optional. POST endpoint for multi-awake watchdog notifications |
-| `DOCKER_HOST` | Where to reach the socket proxy (`tcp://mcpanel-socket-proxy:2375`) |
-| `DOCKER_NETWORK` | Network world containers join (so RCON over the docker network works) |
-| `PUID` / `PGID` | Container runs as this UID:GID; matches the itzg `UID`/`GID` env so file ownership is consistent |
-| `TZ` | Timezone for backup scheduler |
+| `MC_COOKIE_SECURE` | Sets `Secure` flag on session + CSRF cookies (`true`). Set `false` only for local-dev HTTP. |
+| `MC_ADMIN_GROUP` / `MC_OPERATOR_GROUP` / `MC_USER_GROUP` | Identity-provider group names mapped to the three roles. Forward-headers mode only. (`mc-admin` / `mc-operator` / `mc-user`) |
+| `MC_PANEL_I_KNOW_THIS_IS_UNAUTHENTICATED` | Dev escape hatch — every request becomes admin@anonymous when `true`. |
 
-### Persisted admin config (`${MC_DATA_ROOT}/admin-config.json`)
+### Path / network
 
-Written via the admin UI. Schema:
+| Var | Purpose |
+|---|---|
+| `MC_HOST_DATA_ROOT` / `MC_CONTAINER_DATA_ROOT` | Split form of `MC_DATA_ROOT`. Use when the host path and the in-container path can't be identical (Docker Desktop file sharing, Podman, userns-remapped rootless Docker). Either alone overrides its side of `MC_DATA_ROOT`. |
+| `MC_PORT_RANGE_START` / `MC_PORT_RANGE_END` | Host port range allocator picks from (`35550` / `35559`). |
+| `MINECRAFT_HOSTNAME` | Connect string shown on world pages. If unset, mcpanel uses the request `Host` header. |
+| `DOCKER_HOST` | Where to reach the socket proxy (`tcp://mcpanel-socket-proxy:2375`). |
+| `DOCKER_NETWORK` | Network world containers join (default `mcpanel_default`). |
+
+### World defaults
+
+| Var | Purpose |
+|---|---|
+| `MC_DEFAULT_VERSION` | Default version env on new worlds (`LATEST`). |
+| `MC_DEFAULT_TYPE` | Default server type (`VANILLA`; also accepts `PAPER` / `FABRIC` / `FORGE`). |
+| `MC_RCON_PASSWORD` | Applied to every world container; reachable only on the docker network. |
+| `MC_BACKUP_HOUR` | Daily backup runs at this local hour, 24h (`3`). |
+| `MC_BACKUP_RETENTION_DAYS` | Retention sweep TTL; permanent snapshots are exempt (`7`). |
+| `APPRISE_URL` | Optional. POST endpoint for multi-awake watchdog notifications. |
+| `PUID` / `PGID` | Container runs as this UID:GID; matches the itzg `UID`/`GID` env so file ownership is consistent. |
+| `TZ` | Timezone for the backup scheduler. |
+
+## Data layout
+
+Everything lives under `${MC_DATA_ROOT}` (or `${MC_CONTAINER_DATA_ROOT}`
+when set):
+
+```
+${MC_DATA_ROOT}/
+├── worlds/             # one dir per world — itzg writes here
+│   └── <name>/         #   ↳ world data, server.properties, whitelist, ops
+├── backups/            # zip-per-snapshot, organized by world
+│   └── <name>/
+├── imports/            # drop-zone for world uploads pending commit
+├── .staging/           # transient extract space for in-progress imports
+├── admin-config.json   # operator-tunable settings (memory bounds, concurrency cap)
+└── auth-state.json     # bcrypt password hash + session secret (built-in mode), 0600
+```
+
+`admin-config.json` schema (written via the admin UI):
 
 ```json
 {
@@ -265,163 +232,174 @@ Written via the admin UI. Schema:
 
 Hard ceilings enforced server-side regardless of file contents:
 `world_memory` is `[1, 32]` GB; `max_concurrent_worlds` is `[1, 16]`.
-Missing or malformed file falls back to defaults that match historical
-behaviour (4 GB locked, 1 concurrent).
-
-## Data layout on disk
-
-Everything lives under `${MC_DATA_ROOT}` (host path bind-mounted into the
-panel as the same path):
-
-```
-/data/minecraft/                         (= ${MC_DATA_ROOT})
-├── admin-config.json                    panel-wide knobs
-├── worlds/
-│   └── <world-name>/                    bind-mounted into mc-<world-name> as /data
-│       ├── server.properties            panel writes policy keys, leaves rest alone
-│       ├── world/level.dat              feeds resolved_version chip
-│       ├── whitelist.json, ops.json     panel reads + writes
-│       └── .panel/
-│           └── banner.{png,jpg,webp,gif} optional uploaded banner
-├── backups/
-│   └── <world-name>/
-│       ├── YYYY-MM-DD_HHMMSS.zip
-│       └── YYYY-MM-DD_HHMMSS.zip.meta.json   sidecar — display_name, description,
-│                                              permanent, world_version, created_by,
-│                                              created_at_ms
-├── imports/                             optional. Pre-staged upload sources
-└── .staging/                            in-progress uploads, garbage-collected
-```
-
-The `.panel/` per-world directory is dot-prefixed so it never collides with
-files Minecraft writes. Same convention for `.staging/` and `.meta.json`
-sidecars.
 
 ## API surface
 
-All endpoints under `/api/v1/`. Authelia's middleware adds `Remote-User` and
-`Remote-Groups`; the panel doesn't issue its own auth.
+All endpoints under `/api/v1/`. Auth depends on the active backend
+(session cookie in built-in mode; `Remote-User` + `Remote-Groups` in
+forward-headers mode). CSRF is enforced on every mutation in both modes.
 
-Read-only (mc-user+):
-- `GET /me`, `/state`, `/worlds`, `/worlds/{n}`, `/worlds/{n}/banner`,
-  `/worlds/{n}/usage`, `/worlds/{n}/backups/{f}` (download),
-  `/worlds/{n}/export`, `/players`, `/jobs`, `/jobs/{id}`, `/backups`,
-  `/imports/{id}`, `/mc-versions`, `/admin/config`
+**Read-only** (user+):
+`GET /me`, `/auth/status`, `/state`, `/worlds`, `/worlds/{n}`,
+`/worlds/{n}/banner`, `/worlds/{n}/usage`,
+`/worlds/{n}/backups/{f}` (download), `/worlds/{n}/export`, `/players`,
+`/jobs`, `/jobs/{id}`, `/backups`, `/imports/{id}`, `/mc-versions`,
+`/admin/config`.
 
-Mutate (mc-operator+):
-- `POST /worlds` (create), `/worlds/{n}/start|stop|upgrade`,
-  `PATCH /worlds/{n}/properties`, `/worlds/{n}/memory`,
-  `POST /worlds/{n}/whitelist`, `DELETE /worlds/{n}/whitelist/{p}`,
-  `POST /worlds/{n}/ops/toggle`, `POST /worlds/{n}/banner` + `DELETE`,
-  `POST /worlds/{n}/backups` (run / save snapshot),
-  `PATCH /backups/{w}/{f}` (rename / repin), `POST /worlds/{n}/restore`,
-  `GET /worlds/{n}/console` (RCON), `POST /worlds/{n}/rcon`,
-  imports/* upload + commit
+**Mutate** (operator+):
+`POST /worlds` (create), `/worlds/{n}/start|stop|upgrade`,
+`PATCH /worlds/{n}/properties`, `/worlds/{n}/memory`,
+`POST /worlds/{n}/whitelist`, `DELETE /worlds/{n}/whitelist/{p}`,
+`POST /worlds/{n}/ops/toggle`, `POST /worlds/{n}/banner` + `DELETE`,
+`POST /worlds/{n}/backups` (ad-hoc / named snapshot),
+`PATCH /backups/{w}/{f}` (rename / repin),
+`POST /worlds/{n}/restore`, `GET /worlds/{n}/console` (live log SSE),
+`POST /worlds/{n}/rcon`, imports/* upload + commit.
 
-Admin-only (mc-admin):
-- `POST /worlds/{n}/delete`, `DELETE /backups/{w}/{f}`,
-  `PATCH /admin/config`
+**Admin-only**:
+`POST /worlds/{n}/delete`, `DELETE /backups/{w}/{f}`,
+`PATCH /admin/config`, `POST /auth/change-password`,
+`POST /auth/login`, `POST /auth/logout`.
 
-Single-flight job submission for long-running mutations: handlers return
-`202 { job_id }` and the SPA polls `GET /jobs/{id}` via `runJob()`. 10-min
-TTL in `app/jobs.py` (process-local — restart loses in-flight state, but
-Docker is the source of truth).
+Long-running mutations (create / start / stop / upgrade / backup) return
+`202 { job_id }`; the SPA polls `GET /jobs/{id}` until terminal.
+Single-flight per `(kind, target)` — a 409 carries the existing job's id
+so the client can attach to the in-flight operation.
 
-## Development workflow
+## Architecture
 
-The current setup deploys the production build only — no in-tree dev mode.
-For active iteration, two-terminal:
+```
+                       Internet
+       ┌───────────────────┼───────────────────┐
+       │                   │                   │
+       ▼                   ▼                   ▼
+  :443 (your TLS         :35550…:35559    other apps
+  reverse proxy)         (game ports
+       │                  on host)
+       ▼
+   ┌─────────┐
+   │ mcpanel │◀──── ${MC_DATA_ROOT}/worlds/<name>  (bind mounted)
+   │ (uvicorn│      ${MC_DATA_ROOT}/backups/...
+   │  + Vite │◀──── auth-state.json  (built-in mode)
+   │  SPA)   │      admin-config.json
+   └────┬────┘
+        │ Docker API (narrowed by socket proxy)
+        ▼
+   ┌───────────┐    spawns    ┌──────────────────────┐
+   │ docker-   │ ─────────────▶│ itzg/minecraft-server│ × N worlds
+   │ socket-   │              │   labeled .managed   │
+   │ proxy     │              │   bind mounts world  │
+   └───────────┘              │   data from host     │
+                              └──────────────────────┘
+```
+
+mcpanel itself never touches `/var/run/docker.sock` directly. The socket
+proxy is configured to allow `CONTAINERS`, `IMAGES`, `NETWORKS`, `INFO`,
+`VERSION`, `POST` — anything outside that allowlist is denied.
+
+The panel **observes** existing world containers by the
+`mc-panel.managed=true` Docker label; spawned worlds get
+`mc-panel.managed`, `mc-panel.world=<name>`, `mc-panel.port=<port>`
+labels at create time. These label names are stable across releases —
+upgrading the panel image never orphans existing worlds.
+
+## Repo layout
+
+```
+.
+├── app/                      # FastAPI backend
+│   ├── main.py               #   ASGI app, lifespan, SPA static fallback
+│   ├── api.py                #   all /api/v1/* endpoints
+│   ├── auth.py               #   AUTH_MODE selection + request gates
+│   ├── auth_state.py         #   bcrypt hash + session secret persistence
+│   ├── csrf.py               #   double-submit cookie middleware
+│   ├── permissions.py        #   role hierarchy + group→role mapping
+│   ├── admin_config.py       #   admin-config.json schema + IO
+│   ├── docker_client.py      #   Docker SDK wrapper (via socket proxy)
+│   ├── world.py              #   per-world fs ops (properties, whitelist, ops)
+│   ├── backup.py             #   zip-based snapshots + nightly scheduler
+│   ├── jobs.py               #   single-flight long-running mutation tracker
+│   ├── level_dat.py          #   NBT parsing for resolved_version
+│   ├── rcon.py               #   RCON client
+│   ├── players.py            #   known-players cache
+│   ├── usage.py              #   CPU/RAM sampling + container event tail
+│   └── watchdog.py           #   dual-awake notifier
+├── web/                      # Vite + React + Tailwind SPA
+│   └── src/
+│       ├── App.tsx           #   routes (incl. /login)
+│       ├── api/              #   client + types + TanStack Query hooks
+│       ├── components/       #   chrome (top bar, left rail), atoms
+│       └── pages/            #   Home, WorldOverview, Console, Backups,
+│                             #   Admin, Login, Import, NewWorld, ...
+├── compose.yaml              # single-host standalone compose
+├── .env.example
+├── Dockerfile                # multi-stage: node build → python runtime
+└── requirements.txt
+```
+
+## Development
+
+Two-terminal setup:
 
 ```bash
-# Terminal 1: backend with hot reload
-cd app
+# Terminal 1 — backend with reload
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 
-# Terminal 2: frontend Vite dev server
-cd web
-npm run dev   # opens on :5173 with HMR
+# Terminal 2 — Vite dev server with HMR
+cd web && npm install && npm run dev    # opens on :5173
 ```
 
-Configure Vite to proxy `/api/*` to `http://127.0.0.1:8000` so cookies +
-the `Remote-User` mock header survive. (This proxy isn't checked in yet —
-add it to `web/vite.config.ts`'s `server.proxy` when extracting.)
+The Vite dev server proxies `/api/*` to the backend (see
+`web/vite.config.ts`). For the panel to accept requests during dev:
 
-For real auth during dev, either:
-- (a) Set `Remote-User` and `Remote-Groups` headers in your browser via an
-  extension and skip Authelia, OR
-- (b) Run a local minimal Authelia stub.
+- **Built-in mode**: set `AUTH_MODE=builtin` and `MC_ADMIN_PASSWORD=...`,
+  set `MC_COOKIE_SECURE=false` (HMR is HTTP), then sign in normally.
+- **Forward-headers mode**: set `Remote-User` and `Remote-Groups` via a
+  browser extension (e.g. ModHeader), OR set
+  `MC_PANEL_I_KNOW_THIS_IS_UNAUTHENTICATED=true` to skip auth entirely
+  for local iteration.
 
-## Deployment in selhost-main today
+The Docker SDK still needs a socket somewhere — easiest is to run
+`docker compose up -d mcpanel-socket-proxy` in a third terminal and
+point the backend at it with `DOCKER_HOST=tcp://127.0.0.1:2375` after
+publishing the proxy's port.
 
-`apps/mc-panel/compose.yaml` defines two services in the `mc-panel` profile.
-Inclusion in `compose.yaml` at the repo root, plus `MINECRAFT_HOSTNAME` in
-`.env`, plus `mc-panel` in `COMPOSE_PROFILES`. Authelia rule is in
-`apps/authelia/config/configuration.yml`:
+Type-check before committing:
 
-```yaml
-- domain: '{{ env "TEMPLATE_MINECRAFT_HOSTNAME" }}'
-  policy: 'one_factor'
-  subject:
-    - ['group:admins']
-    - ['group:minecraft-admins']  # legacy; retire after the cutover
-    - ['group:mc-admin']
-    - ['group:mc-operator']
-    - ['group:mc-user']
+```bash
+cd web && npm run typecheck
 ```
-
-DNS for `mcpanel.example.com` is in the `cloudflare-ddns` DOMAINS list
-(public A record) plus mirrored to the LAN dnsmasq via the
-`scripts/add-lan-host` helper for hairpin-NAT-free internal access.
-
-## Roadmap
-
-The repo was just extracted from a private monorepo (`selhost-main`); it
-still carries assumptions from that environment. Planned in rough order:
-
-1. Parameterize: forward-auth group names, optional hostname, split
-   host/container data paths.
-2. Built-in single-admin auth mode (`AUTH_MODE=builtin`) so the panel works
-   without an upstream forward-auth proxy. CSRF middleware on
-   state-changing endpoints. Refuse-to-start guardrail when unauthenticated.
-3. Public-facing README rewrite, multi-arch GHCR builds, semver release
-   tags, `v0.1.0`.
 
 ## Known gotchas
 
-- **Container cgroup needs +1 GiB headroom over JVM heap.** itzg's `MEMORY`
-  env sets `-Xmx` (heap), but a busy MC server's JIT cache, metaspace,
-  direct buffers, and thread stacks add 500 MB – 1 GB on top. Without
-  headroom the kernel OOM-kills the JVM mid-tick. `docker_client.py:
-  _container_mem_limit_bytes` adds it; don't remove.
-- **WAL-mode SQLite reads.** mc-panel doesn't use SQLite, but its sidecar
-  consumers (Beszel via the docker socket) sometimes expose stale data.
-  Anywhere the panel grows DB-backed state, copy `*.db` + `*.db-wal` +
-  `*.db-shm` together when reading from outside the writer process.
-- **Sub-second start jobs miss `useActiveJob`'s 1.5s poll.** The
-  `useStartWorld` mutation does its own `useDelayedInvalidate` (3s/8s/20s)
-  so world detail catches the post-migration `level.dat` even when
-  `useActiveJob` never observed the job in flight. See
-  `web/src/api/queries.ts:useDelayedInvalidate`.
-- **`(upgrading…)` chip narrowness.** Only `useUpgradeWorld` marks the
-  migrating flag, not `useStartWorld` — otherwise every routine start of a
-  world that didn't need migration would falsely advertise as upgrading
-  for 25s. See the same file's `useMarkMigrating`.
-- **Authelia gates the SPA shell at `/`, the admin panel at `/_/`, but
-  `/api/*` should NOT be Authelia-gated** for PocketBase-style apps. mc-
-  panel's API doesn't have this issue (everything goes through Authelia
-  fine), but if you ever stand up a sibling panel that's PocketBase-based,
-  remember the lesson — Beszel ran into this.
-- **Container runs as `${PUID}:${PGID}` (1000:1000).** itzg's containers
-  also run as those IDs (via `UID`/`GID` env). Files written by either side
-  match. Don't switch the panel to root or itzg-created files become
-  unreadable from the panel.
-- **Concurrent-cap is checked on `/start` only.** Upgrade and resize bypass
-  the check because they replace one running instance with another (no new
-  slot consumed). Don't add the check to those paths or you'll deadlock
-  any single-cap instance during upgrade.
+- **Container cgroup needs +1 GiB headroom over JVM heap.** `itzg`'s
+  `MEMORY` env sets `-Xmx` (heap), but a busy MC server's JIT cache,
+  metaspace, direct buffers, and thread stacks add 500 MB – 1 GB on top.
+  Without headroom the kernel OOM-kills the JVM mid-tick. mcpanel adds
+  it automatically (`docker_client.py:_container_mem_limit_bytes`);
+  don't remove.
+- **Host data path must equal the in-container path.** mcpanel passes
+  paths it can read locally to Docker as bind-mount sources. On Docker
+  Desktop / Podman / rootless Docker the two can differ — use
+  `MC_HOST_DATA_ROOT` + `MC_CONTAINER_DATA_ROOT` instead of the
+  single-value `MC_DATA_ROOT`.
+- **Container runs as `${PUID}:${PGID}`** (default 1000:1000). `itzg`
+  containers run as the same IDs (via the `UID`/`GID` env). Don't switch
+  the panel to root or files written by `itzg` become unreadable.
+- **Concurrent-cap is checked on `/start` only.** Upgrade and resize
+  bypass the check because they replace one running instance with
+  another (no new slot consumed). Don't propagate the check to those
+  paths or you'll deadlock any single-cap instance during upgrade.
 
-## Reference: features by commit
+## Releases
 
-If you want context on why something is shaped a particular way, the git log
-in selhost-main has commit-by-commit narrative since this panel's v2
-rewrite. Search for `mc-panel:` prefixed commits.
+`:vX.Y.Z` for tagged releases (immutable), `:X.Y` for the latest patch,
+`:latest` for the most recent release, `:main` for the rolling default
+branch, `:<short-sha>` for pinning to a specific commit. Multi-arch
+(`linux/amd64` + `linux/arm64`).
+
+See [CHANGELOG.md](CHANGELOG.md).
+
+## License
+
+[MIT](LICENSE).
